@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="apkscraper",  # This is the name that will appear on PyPI
-    version="1.1.1",
+    version="1.2.0",
     author="Suman Roy",
     author_email="hello@sumanroy.in",
     description="An enterprise-grade, multi-threaded historical APK extraction pipeline.",

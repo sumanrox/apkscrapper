@@ -483,14 +483,46 @@ def main():
         apps_to_process = results if args.mode == 'developer' else []
         
         # Exact package name match logic for 'app' mode
+        # Exact package name match logic for 'app' mode
         if args.mode == 'app':
-            app = results[0]
+            app = None
+            exact_match = False
             for r in results:
                 r_id = r.get('id') or ''
                 if r_id == args.query or r_id.strip('/').endswith(f"/{args.query}") or r_id.endswith(f"/{args.query}"):
                     app = r
+                    exact_match = True
                     break
-            apps_to_process = [app]
+            
+            if not exact_match and len(results) > 0:
+                if sys.stdin.isatty():
+                    print(f"\n{C_YELLOW}[?] {scraper.name}: Exact match for '{args.query}' not found.{C_RESET}")
+                    print(f"Multiple apps found. Please select the correct target:")
+                    for i, r in enumerate(results[:10]):
+                        print(f"  [{i+1}] {r.get('name')} (ID: {r.get('id')})")
+                    print(f"  [0] Skip this source")
+                    
+                    while True:
+                        try:
+                            choice = input(f"\nSelect an option [0-{min(len(results), 10)}]: ").strip()
+                            if not choice:
+                                continue
+                            choice = int(choice)
+                            if choice == 0:
+                                app = None
+                                break
+                            elif 1 <= choice <= 10 and choice <= len(results):
+                                app = results[choice-1]
+                                break
+                            else:
+                                print(f"{C_RED}Invalid choice.{C_RESET}")
+                        except ValueError:
+                            print(f"{C_RED}Please enter a number.{C_RESET}")
+                else:
+                    # Non-interactive environment fallback
+                    app = results[0]
+            
+            apps_to_process = [app] if app else []
             
         for app in apps_to_process:
             app_name = app.get('name') or args.query
