@@ -5,7 +5,7 @@ import json
 import re
 import argparse
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, quote
 import sys
 sys.dont_write_bytecode = True
 
@@ -106,6 +106,10 @@ class BaseScraper:
                 os.remove(part_filename)
             return False
 
+    def getDeveloperApps(self, developer_name: str) -> List[Dict]:
+        """Fetch a list of all apps by a specific developer."""
+        raise NotImplementedError()
+
 class APKPureScraper(BaseScraper):
     def __init__(self):
         super().__init__("APKPure")
@@ -124,6 +128,26 @@ class APKPureScraper(BaseScraper):
             response.raise_for_status()
             results = response.json()
             return [{'name': r.get('title'), 'id': r.get('packageName'), 'url': r.get('url')} for r in results]
+        except Exception:
+            return []
+
+    def getDeveloperApps(self, developer_name: str) -> List[Dict]:
+        url = f"https://apkpure.net/developer/{quote(developer_name)}"
+        try:
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            apps = []
+            for a in soup.find_all('a', class_='apk-item'):
+                title_tag = a.find('p', class_='p1') or a.find('div', class_='p1') or a.find('p', class_='title')
+                title = title_tag.text.strip() if title_tag else a.get('title') or a.text.strip()
+                if a.get('href'):
+                    apps.append({
+                        'name': title,
+                        'id': a['href'].split('/')[-1] if '/' in a['href'] else a['href'],
+                        'url': f"https://apkpure.net{a['href']}"
+                    })
+            return apps
         except Exception:
             return []
 
@@ -195,6 +219,29 @@ class APKMirrorScraper(BaseScraper):
                         'url': f"https://www.apkmirror.com{a_tag['href']}"
                     })
             return results
+        except Exception as e:
+            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in [403, 429, 503]:
+                with print_lock:
+                    print(f"{C_RED}[!] {self.name}: Blocked by Cloudflare. Please set APKMIRROR_CF_CLEARANCE and APKMIRROR_USER_AGENT environment variables.{C_RESET}")
+            return []
+
+    def getDeveloperApps(self, developer_name: str) -> List[Dict]:
+        # APKMirror developer pages are usually a search query or /apk/{developer}/
+        url = f"https://www.apkmirror.com/?post_type=app_release&searchtype=app&s={quote_plus(developer_name)}"
+        try:
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            apps = []
+            for row in soup.find_all('div', class_='appRow'):
+                a_tag = row.find('a', class_='fontBlack')
+                if a_tag and a_tag.get('href'):
+                    apps.append({
+                        'name': a_tag.text.strip(),
+                        'id': a_tag['href'],
+                        'url': f"https://www.apkmirror.com{a_tag['href']}"
+                    })
+            return apps
         except Exception as e:
             if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in [403, 429, 503]:
                 with print_lock:
@@ -291,6 +338,23 @@ class UptodownScraper(BaseScraper):
             pass
         return []
 
+    def getDeveloperApps(self, developer_name: str) -> List[Dict]:
+        url = "https://www.uptodown.com/android/en/s"
+        try:
+            # Uptodown lacks a uniform developer endpoint, so we use their internal search
+            response = self.session.post(url, data={"queryString": developer_name}, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("success") == 1 and "data" in data and "apps" in data["data"]:
+                results = []
+                for r in data["data"]["apps"]:
+                    clean_name = re.sub(r'<[^>]+>', '', r.get('name', ''))
+                    results.append({'name': clean_name, 'id': r.get('url'), 'url': r.get('url')})
+                return results
+        except Exception:
+            pass
+        return []
+
     def getVersions(self, app_url: str) -> List[Dict]:
         if not app_url.startswith('http'):
             app_url = f"https://{app_url}"
@@ -372,7 +436,8 @@ def processVersion(v: Dict, args: argparse.Namespace, title: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Historical APK Scraper")
-    parser.add_argument('query', help="App name to search for")
+    parser.add_argument('query', help="App name or developer name to search for")
+    parser.add_argument('-m', '--mode', choices=['app', 'developer'], default='app', help="Scrape a single app or all apps by a developer")
     parser.add_argument('-a', '--all', action='store_true', help="Download all versions available")
     parser.add_argument('-v', '--version', help="Download specific version")
     parser.add_argument('-d', '--dir', default='.', help="Directory to save downloads")
@@ -395,44 +460,56 @@ def main():
     if args.source in ['all', 'uptodown']: scrapers.append(UptodownScraper())
     if args.source in ['all', 'apkmirror']: scrapers.append(APKMirrorScraper())
     
-    print(f"{C_CYAN}[*] Searching for '{args.query}' across {len(scrapers)} source(s)...{C_RESET}")
+    print(f"{C_CYAN}[*] Searching for '{args.query}' in mode '{args.mode}' across {len(scrapers)} source(s)...{C_RESET}")
     
     all_versions = []
     title = args.query.replace(' ', '_')
     package_name = None
     
     for scraper in scrapers:
-        results = scraper.search(args.query)
+        if args.mode == 'developer':
+            results = scraper.getDeveloperApps(args.query)
+        else:
+            results = scraper.search(args.query)
+            
         if not results:
-            print(f"{C_RED}[-] {scraper.name}: No search results.{C_RESET}")
+            print(f"{C_RED}[-] {scraper.name}: No results found.{C_RESET}")
             continue
             
-        # Exact package name match logic
-        app = results[0]
-        for r in results:
-            if r.get('id') == args.query or (r.get('id') or '').endswith(f"/{args.query}"):
-                app = r
-                break
-                
-        app_name = app.get('name') or args.query
-        print(f"{C_GREEN}[+] {scraper.name}: Found '{app_name}'{C_RESET}")
-        title = app_name.replace(' ', '_') 
+        apps_to_process = results if args.mode == 'developer' else []
         
-        app_id = app.get('id') or args.query
-        if scraper.name == "APKPure":
-            package_name = app_id
+        # Exact package name match logic for 'app' mode
+        if args.mode == 'app':
+            app = results[0]
+            for r in results:
+                if r.get('id') == args.query or (r.get('id') or '').endswith(f"/{args.query}"):
+                    app = r
+                    break
+            apps_to_process = [app]
             
-        versions = scraper.getVersions(app_id)
-        
-        if versions:
-            print(f"{C_GRAY}    -> Found {len(versions)} historical versions.{C_RESET}")
-            all_versions.extend(versions)
-        else:
-            print(f"{C_GRAY}    -> No historical versions found.{C_RESET}")
+        for app in apps_to_process:
+            app_name = app.get('name') or args.query
+            print(f"{C_GREEN}[+] {scraper.name}: Processing '{app_name}'{C_RESET}")
+            current_title = app_name.replace(' ', '_')
+            
+            app_id = app.get('id') or args.query
+            if scraper.name == "APKPure" and args.mode == 'app':
+                package_name = app_id
+                
+            versions = scraper.getVersions(app_id)
+            
+            if versions:
+                print(f"{C_GRAY}    -> Found {len(versions)} historical versions.{C_RESET}")
+                # We inject the current title so parallel processor can use it
+                for v in versions:
+                    v['_title'] = current_title
+                all_versions.extend(versions)
+            else:
+                print(f"{C_GRAY}    -> No historical versions found.{C_RESET}")
 
     if not all_versions:
         print(f"\n{C_YELLOW}[!] Could not find any versions across selected sources.{C_RESET}")
-        if package_name:
+        if package_name and args.mode == 'app':
             print(f"{C_CYAN}[*] Fallback: Engaging apkeep for package '{package_name}'...{C_RESET}")
             try:
                 subprocess.run(['apkeep', '-a', package_name, args.dir], check=True)
@@ -468,7 +545,7 @@ def main():
     print(f"\n{C_CYAN}[*] Preparing to download {len(deduped)} unique version(s) utilizing {args.workers} workers...{C_RESET}\n")
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = [executor.submit(processVersion, v, args, title) for v in deduped]
+        futures = [executor.submit(processVersion, v, args, v.get('_title', title)) for v in deduped]
         concurrent.futures.wait(futures)
         
     print(f"\n{C_GREEN}[+] All tasks completed!{C_RESET}")
