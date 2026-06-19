@@ -306,7 +306,7 @@ def main():
         # Exact package name match logic
         app = results[0]
         for r in results:
-            if r.get('id') == args.query or r.get('id', '').endswith(f"/{args.query}"):
+            if r.get('id') == args.query or (r.get('id') or '').endswith(f"/{args.query}"):
                 app = r
                 break
                 
