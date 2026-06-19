@@ -10,7 +10,8 @@ APKScraper acts as a universal ingestion engine, aggregating historical applicat
 
 ## 🚀 Features
 
-- **Multi-Source Aggregation**: Concurrently scrapes and dedupes version histories from both APKPure and Uptodown APIs.
+- **Multi-Source Aggregation**: Concurrently scrapes and dedupes version histories from APKPure, Uptodown, and APKMirror APIs.
+- **Developer Catalog Extraction**: Seamlessly extracts an entire developer's suite of applications in bulk using `--mode developer`.
 - **Zero-RAM Streaming**: Downloads massive `1GB+` `.xapk` files safely using memory-efficient block streaming and atomic `.part` temporary files, eliminating corrupted partial downloads.
 - **Exact Package Targeting**: Employs an exact-match override engine, ensuring searches for `com.google.android.youtube` strictly download the target package without hallucinating fuzzy matches.
 - **Scope Sanitation**: Automatically strips `.apk` and `.xapk` extensions from queries, allowing you to directly copy-paste targets from HackerOne or Bugcrowd scopes.
@@ -41,20 +42,22 @@ apkscraper <query> [options]
 ### 📖 Available Commands & Parameters
 
 ```text
-usage: apkscraper [-h] [-a] [-v VERSION] [-d DIR] [-s {all,apkpure,uptodown}] [-w WORKERS]
+usage: apkscraper [-h] [-m {app,developer}] [-a] [-v VERSION] [-d DIR] [-s {all,apkpure,uptodown,apkmirror}] [-w WORKERS]
                   query
 
 Universal Historical APK Scraper
 
 positional arguments:
-  query                 App name or Exact Package ID to search for (e.g. com.google.android.youtube)
+  query                 App name, Developer name, or Exact Package ID to search for
 
 options:
   -h, --help            show this help message and exit
+  -m, --mode {app,developer}
+                        Scrape a single app or all apps by a developer (default: app)
   -a, --all             Download all versions available
   -v, --version VERSION Download specific version
   -d, --dir DIR         Directory to save downloads (default: current directory)
-  -s, --source {all,apkpure,uptodown}
+  -s, --source {all,apkpure,uptodown,apkmirror}
                         Sources to scrape from (default: all)
   -w, --workers WORKERS Number of concurrent downloads (default: 4)
 ```
@@ -94,13 +97,34 @@ apkscraper "youtube" --all --workers 8
 **6. Isolate a Specific CDN**
 Only poll a specific source for historical versions instead of aggregating all of them.
 ```bash
-apkscraper "youtube" --all --source uptodown
+apkscraper "youtube" --all --source apkmirror
 ```
+
+**7. Bulk Extract a Developer's Catalog**
+Extract all apps published by a specific developer across all enabled sources.
+```bash
+apkscraper "Google LLC" --mode developer --all -w 8
+```
+
+## 🛡️ Bypassing Cloudflare (APKMirror)
+
+APKMirror is strictly protected by Cloudflare's Turnstile WAF. To scrape it successfully without being blocked (HTTP 403/503), you must supply a valid Cloudflare clearance cookie from an authenticated browser session using environment variables:
+
+```bash
+export APKMIRROR_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+export APKMIRROR_CF_CLEARANCE="YOUR_CF_CLEARANCE_COOKIE_HERE"
+```
+
+If these are not set or expire, the scraper will gracefully catch the WAF block and output a warning.
 
 ## 🧪 Running Tests
 
 The package includes a comprehensive `unittest` TDD suite containing mocks for the network and file I/O operations.
 
 ```bash
-python3 -m unittest apkscraper/tests/test_scraper.py
+python3 -m unittest discover apkscraper/tests/
 ```
+
+## ⚠️ Disclaimer
+
+This tool is designed for educational purposes, security research, and vulnerability analysis (such as Bug Bounty programs). Scraping platforms may violate their Terms of Service. The authors are not responsible for IP bans, blocks, or legal repercussions resulting from the use of this tool. Always implement rate-limiting and abide by `robots.txt` when automating requests.
