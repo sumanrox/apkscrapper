@@ -9,7 +9,7 @@ setup(
     name="apkscraper",  # This is the name that will appear on PyPI
     version="1.0.0",
     author="Spectre",
-    author_email="spectre@bugbounty.local",
+    author_email="spectre@example.com",
     description="An enterprise-grade, multi-threaded historical APK extraction pipeline.",
     long_description=long_description,
     long_description_content_type="text/markdown",
