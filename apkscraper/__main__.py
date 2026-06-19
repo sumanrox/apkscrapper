@@ -163,6 +163,109 @@ class APKPureScraper(BaseScraper):
         except Exception:
             return None
 
+class APKMirrorScraper(BaseScraper):
+    def __init__(self):
+        super().__init__("APKMirror")
+        # Load from environment variables to bypass Cloudflare
+        cf_clearance = os.environ.get('APKMIRROR_CF_CLEARANCE', '')
+        user_agent = os.environ.get('APKMIRROR_USER_AGENT', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
+        
+        self.session.headers.update({
+            'User-Agent': user_agent,
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.apkmirror.com/'
+        })
+        
+        if cf_clearance:
+            self.session.cookies.set('cf_clearance', cf_clearance, domain='.apkmirror.com')
+
+    def search(self, query: str) -> List[Dict]:
+        url = f"https://www.apkmirror.com/?post_type=app_release&searchtype=app&s={quote_plus(query)}"
+        try:
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            results = []
+            for row in soup.find_all('div', class_='appRow'):
+                a_tag = row.find('a', class_='fontBlack')
+                if a_tag and a_tag.get('href'):
+                    results.append({
+                        'name': a_tag.text.strip(),
+                        'id': a_tag['href'],
+                        'url': f"https://www.apkmirror.com{a_tag['href']}"
+                    })
+            return results
+        except Exception as e:
+            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in [403, 429, 503]:
+                with print_lock:
+                    print(f"{C_RED}[!] {self.name}: Blocked by Cloudflare. Please set APKMIRROR_CF_CLEARANCE and APKMIRROR_USER_AGENT environment variables.{C_RESET}")
+            return []
+
+    def getVersions(self, app_id: str) -> List[Dict]:
+        url = f"https://www.apkmirror.com{app_id}"
+        try:
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            versions = []
+            for row in soup.find_all('div', class_='appRow'):
+                a_tag = row.find('a', class_='fontBlack')
+                if a_tag and a_tag.get('href') and '-release' in a_tag['href']:
+                    version_str = a_tag.text.strip()
+                    versions.append({
+                        'version': version_str,
+                        'url': f"https://www.apkmirror.com{a_tag['href']}",
+                        'source': self
+                    })
+            return versions
+        except Exception:
+            return []
+
+    def getDownloadLink(self, download_page_url: str) -> Optional[str]:
+        try:
+            # 1. Version page -> Variant page
+            resp1 = self.session.get(download_page_url, timeout=15)
+            resp1.raise_for_status()
+            soup1 = BeautifulSoup(resp1.content, 'html.parser')
+            
+            variant_url = None
+            for a in soup1.find_all('a'):
+                if a.get('href') and 'download' in a['href'] and a.get('class') and 'accent_color' in a['class']:
+                    variant_url = f"https://www.apkmirror.com{a['href']}"
+                    break
+            
+            if not variant_url:
+                if soup1.find('a', class_='downloadButton'):
+                    variant_url = download_page_url
+                else:
+                    return None
+                    
+            # 2. Variant page -> Download button page
+            resp2 = self.session.get(variant_url, timeout=15)
+            resp2.raise_for_status()
+            soup2 = BeautifulSoup(resp2.content, 'html.parser')
+            dl_btn = soup2.find('a', class_='downloadButton')
+            if not dl_btn:
+                return None
+                
+            dl_page_url = f"https://www.apkmirror.com{dl_btn['href']}"
+            
+            # 3. Download button page -> Actual file
+            resp3 = self.session.get(dl_page_url, timeout=15)
+            resp3.raise_for_status()
+            soup3 = BeautifulSoup(resp3.content, 'html.parser')
+            
+            for a in soup3.find_all('a'):
+                if a.text and 'here' in a.text.lower() and a.get('href'):
+                    href = a['href']
+                    if href.startswith('/'):
+                        return f"https://www.apkmirror.com{href}"
+                    return href
+            
+            return None
+        except Exception:
+            return None
+
 class UptodownScraper(BaseScraper):
     def __init__(self):
         super().__init__("Uptodown")
@@ -273,7 +376,7 @@ def main():
     parser.add_argument('-a', '--all', action='store_true', help="Download all versions available")
     parser.add_argument('-v', '--version', help="Download specific version")
     parser.add_argument('-d', '--dir', default='.', help="Directory to save downloads")
-    parser.add_argument('-s', '--source', choices=['all', 'apkpure', 'uptodown'], default='all', help="Sources to scrape from")
+    parser.add_argument('-s', '--source', choices=['all', 'apkpure', 'uptodown', 'apkmirror'], default='all', help="Sources to scrape from")
     parser.add_argument('-w', '--workers', type=int, default=4, help="Number of concurrent downloads")
     
     args = parser.parse_args()
@@ -290,6 +393,7 @@ def main():
     scrapers = []
     if args.source in ['all', 'apkpure']: scrapers.append(APKPureScraper())
     if args.source in ['all', 'uptodown']: scrapers.append(UptodownScraper())
+    if args.source in ['all', 'apkmirror']: scrapers.append(APKMirrorScraper())
     
     print(f"{C_CYAN}[*] Searching for '{args.query}' across {len(scrapers)} source(s)...{C_RESET}")
     
