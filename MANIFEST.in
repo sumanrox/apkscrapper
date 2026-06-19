@@ -1,0 +1,18 @@
+# Ensure the README is included
+include README.md
+
+# Ensure the core package is included
+graft apkscraper
+
+# Ignore compilation artifacts globally
+global-exclude *.py[cod]
+global-exclude __pycache__
+
+# CRITICAL: Exclude specific private bug bounty documents
+exclude ai_bug_bounty_replication_workflow.md
+exclude enterprise_api_security_research_platform.md
+
+# Ignore traffic captures
+exclude data.xml
+exclude uptodown_data.xml
+exclude *.txt
