@@ -14,6 +14,8 @@ import threading
 import subprocess
 import concurrent.futures
 from typing import List, Dict, Optional
+import hashlib
+from datetime import datetime, timezone
 
 # ANSI Colors
 C_CYAN = '\033[96m'
@@ -32,6 +34,18 @@ try:
 except ImportError:
     HAS_TQDM = False
 
+
+def _sha256_file(path: str) -> Optional[str]:
+    """Hash an existing file in 1MB blocks (used on re-runs where we skip the download)."""
+    try:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for block in iter(lambda: f.read(1024 * 1024), b''):
+                h.update(block)
+        return h.hexdigest()
+    except IOError:
+        return None
+
 class BaseScraper:
     def __init__(self, name: str):
         self.name = name
@@ -47,14 +61,16 @@ class BaseScraper:
         self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
 
-    def downloadFile(self, url: str, filename: str) -> bool:
-        """Download file efficiently with resume support and progress."""
+    def downloadFile(self, url: str, filename: str) -> Optional[str]:
+        """Download file with progress. Returns the sha256 hex digest on success, None on failure.
+        Streams the hash while writing so we never re-read the (possibly 1GB+) file."""
         if os.path.exists(filename):
             with print_lock:
                 print(f"{C_YELLOW}[i] {self.name}: Skipping {os.path.basename(filename)} (already exists){C_RESET}")
-            return True
+            return _sha256_file(filename)
 
         part_filename = f"{filename}.part"
+        hasher = hashlib.sha256()
 
         try:
             response = self.session.get(url, stream=True, allow_redirects=True, timeout=20)
@@ -62,7 +78,7 @@ class BaseScraper:
         except requests.RequestException as e:
             with print_lock:
                 print(f"\n{C_RED}[!] {self.name}: Failed to download {os.path.basename(filename)}: {e}{C_RESET}")
-            return False
+            return None
             
         total_size = int(response.headers.get('content-length', 0))
         block_size = 1024 * 1024 # 1MB chunks
@@ -73,6 +89,7 @@ class BaseScraper:
                     with tqdm(total=total_size, unit='iB', unit_scale=True, desc=f"{C_CYAN}[{self.name}] {os.path.basename(filename)}{C_RESET}", leave=False) as pbar:
                         for data in response.iter_content(block_size):
                             f.write(data)
+                            hasher.update(data)
                             pbar.update(len(data))
                 else:
                     downloaded = 0
@@ -83,6 +100,7 @@ class BaseScraper:
                         
                     for data in response.iter_content(block_size):
                         f.write(data)
+                        hasher.update(data)
                         downloaded += len(data)
                         if total_size > 0:
                             percent = int(100 * downloaded / total_size)
@@ -98,13 +116,13 @@ class BaseScraper:
             
             # Atomic rename once completed
             os.rename(part_filename, filename)
-            return True
+            return hasher.hexdigest()
         except IOError as e:
             with print_lock:
                 print(f"\n{C_RED}[!] {self.name}: Disk I/O error while saving {filename}: {e}{C_RESET}")
             if os.path.exists(part_filename):
                 os.remove(part_filename)
-            return False
+            return None
 
     def getDeveloperApps(self, developer_name: str) -> List[Dict]:
         """Fetch a list of all apps by a specific developer."""
@@ -418,6 +436,24 @@ class UptodownScraper(BaseScraper):
             pass
         return None
 
+def _write_meta(filename: str, v: Dict, title: str, source: str, dl_url: str, sha256: str) -> None:
+    """Sidecar provenance for the apkfacts handoff contract. See GEMINI.md.
+    version_code is left null on purpose -- apkfacts fills it from the AndroidManifest (authoritative)."""
+    meta = {
+        "package_name": v.get('_package') or title,
+        "version_name": v.get('version'),
+        "version_code": None,
+        "source": source,
+        "page_url": v.get('url'),
+        "download_url": dl_url,
+        "sha256": sha256,
+        "filename": os.path.basename(filename),
+        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(f"{filename}.meta.json", 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2, sort_keys=True)
+
+
 def processVersion(v: Dict, args: argparse.Namespace, title: str) -> None:
     """Worker function for parallel downloads."""
     scraper = v['source']
@@ -433,7 +469,9 @@ def processVersion(v: Dict, args: argparse.Namespace, title: str) -> None:
             
         ext = 'xapk' if ('/XAPK/' in dl_url or 'xapk' in dl_url) else 'apk'
         filename = os.path.join(args.dir, f"{title}_{ver_str}_{scraper.name}.{ext}")
-        scraper.downloadFile(dl_url, filename)
+        sha256 = scraper.downloadFile(dl_url, filename)
+        if sha256:
+            _write_meta(filename, v, title, scraper.name, dl_url, sha256)
     except Exception as e:
         with print_lock:
             print(f"{C_RED}[!] {scraper.name}: Unexpected worker error on version {ver_str} - {e}{C_RESET}")
@@ -577,6 +615,8 @@ def main():
     for v in versions_to_download:
         if v['version'] not in seen_versions:
             seen_versions.add(v['version'])
+            # Best-known package id for the sidecar; apkfacts treats the manifest as authoritative.
+            v.setdefault('_package', v.get('_package') or package_name or args.query)
             deduped.append(v)
             
     print(f"\n{C_CYAN}[*] Preparing to download {len(deduped)} unique version(s) utilizing {args.workers} workers...{C_RESET}\n")

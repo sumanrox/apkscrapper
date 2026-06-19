@@ -17,6 +17,7 @@ APKScraper acts as a universal ingestion engine, aggregating historical applicat
 - **Scope Sanitation**: Automatically strips `.apk` and `.xapk` extensions from queries, allowing you to directly copy-paste targets from HackerOne or Bugcrowd scopes.
 - **Apkeep Failsafe**: Integrates natively with `apkeep` as an automated fallback mechanism if regional blocks or Play Store redirection policies hide the target from historical databases.
 - **Thread-Safe UI**: Renders beautiful, concurrent ANSI progress bars without relying on external libraries like `tqdm` that struggle in strict externally-managed Linux environments.
+- **Provenance Sidecars**: Every downloaded APK gets a `<file>.meta.json` sidecar (package, version, source, download URL, and a streamed `sha256`) so downstream extraction pipelines can ingest verified artifacts without re-parsing the binary. The hash is computed during streaming, so it costs nothing extra even on 1GB+ `.xapk` files.
 
 ## 📦 Requirements
 
