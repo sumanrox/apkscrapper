@@ -204,7 +204,7 @@ class APKMirrorScraper(BaseScraper):
             self.session.cookies.set('cf_clearance', cf_clearance, domain='.apkmirror.com')
 
     def search(self, query: str) -> List[Dict]:
-        url = f"https://www.apkmirror.com/?post_type=app_release&searchtype=app&s={quote_plus(query)}"
+        url = f"https://www.apkmirror.com/?post_type=app&searchtype=app&s={quote_plus(query)}"
         try:
             response = self.session.get(url, timeout=15)
             response.raise_for_status()
@@ -227,7 +227,7 @@ class APKMirrorScraper(BaseScraper):
 
     def getDeveloperApps(self, developer_name: str) -> List[Dict]:
         # APKMirror developer pages are usually a search query or /apk/{developer}/
-        url = f"https://www.apkmirror.com/?post_type=app_release&searchtype=app&s={quote_plus(developer_name)}"
+        url = f"https://www.apkmirror.com/?post_type=app&searchtype=app&s={quote_plus(developer_name)}"
         try:
             response = self.session.get(url, timeout=15)
             response.raise_for_status()
@@ -255,15 +255,19 @@ class APKMirrorScraper(BaseScraper):
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             versions = []
-            for row in soup.find_all('div', class_='appRow'):
-                a_tag = row.find('a', class_='fontBlack')
-                if a_tag and a_tag.get('href') and '-release' in a_tag['href']:
-                    version_str = a_tag.text.strip()
-                    versions.append({
-                        'version': version_str,
-                        'url': f"https://www.apkmirror.com{a_tag['href']}",
-                        'source': self
-                    })
+            for widget in soup.find_all('div', class_='listWidget'):
+                header = widget.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div'], class_='widgetHeader')
+                if header and 'all versions' in header.text.lower():
+                    for row in widget.find_all('div', class_='appRow'):
+                        a_tag = row.find('a', class_='fontBlack')
+                        if a_tag and a_tag.get('href') and '-release' in a_tag['href']:
+                            version_str = a_tag.text.strip()
+                            versions.append({
+                                'version': version_str,
+                                'url': f"https://www.apkmirror.com{a_tag['href']}",
+                                'source': self
+                            })
+                    break
             return versions
         except Exception:
             return []
@@ -482,7 +486,8 @@ def main():
         if args.mode == 'app':
             app = results[0]
             for r in results:
-                if r.get('id') == args.query or (r.get('id') or '').endswith(f"/{args.query}"):
+                r_id = r.get('id') or ''
+                if r_id == args.query or r_id.strip('/').endswith(f"/{args.query}") or r_id.endswith(f"/{args.query}"):
                     app = r
                     break
             apps_to_process = [app]
