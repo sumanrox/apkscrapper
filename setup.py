@@ -13,9 +13,9 @@ setup(
     description="An enterprise-grade, multi-threaded historical APK extraction pipeline.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/spectre/apkscraper", # Update with your actual repo
+    url="https://github.com/sumanrox/apkscrapper",
     project_urls={
-        "Bug Tracker": "https://github.com/spectre/apkscraper/issues",
+        "Bug Tracker": "https://github.com/sumanrox/apkscrapper/issues",
     },
     classifiers=[
         "Programming Language :: Python :: 3",

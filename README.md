@@ -1,7 +1,7 @@
 # APKScraper
 
 <p align="center">
-  <img src="assets/banner.png" alt="APKScraper Banner" width="100%">
+  <img src="https://raw.githubusercontent.com/sumanrox/apkscrapper/main/assets/banner.png" alt="APKScraper Banner" width="100%">
 </p>
 
 An enterprise-grade, multi-threaded, and fault-tolerant historical APK extraction pipeline designed for automated vulnerability research, patch diffing, and bug bounty recon.
